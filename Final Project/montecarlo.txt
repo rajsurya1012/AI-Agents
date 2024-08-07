@@ -1,0 +1,379 @@
+class MCTSNode:
+    def __init__(self, state, parent=None):
+        self.state = state
+        self.parent = parent
+        self.children = []
+        self.visits = 0
+        self.score = 0
+        self.player=state['current_player']
+        
+
+    def is_fully_expanded(self):
+        return len(self.children) == len(get_valid_moves(self.state))
+
+    def select_child(self):
+        return max(self.children, key=lambda node: node.score / node.visits + math.sqrt(2 * math.log(self.visits) / node.visits))
+
+    def add_child(self, child_state):
+        child = MCTSNode(child_state, self)
+        self.children.append(child)
+        return child
+
+    def update(self, score):
+        self.visits += 1
+        self.score += score
+    
+    
+def get_valid_moves(state,current_player=None):
+        if current_player==None:
+            current_player=state['current_player']
+        valid_moves=[]
+        board=state['board']
+        if current_player == 'G':
+            if state['goats'] > 0:
+                # If there are still goats to be placed
+                for row in range(5):
+                    for col in range(5):
+                        if board[row][col] == '*':
+                            valid_moves.append((row,col,None,None))
+            else:
+                # If all goats have been placed, they can move
+                for row in range(5):
+                    for col in range(5):
+                        if board[row][col] == current_player:
+                            # Check all adjacent squares
+                            for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                                new_row, new_col = row + dr, col + dc
+                                if valid_move(row, col, new_row, new_col,board,'G'):
+                                    valid_moves.append([row,col,new_row,new_col])
+                                    
+        elif current_player == 'T':
+            for row in range(5):
+                for col in range(5):
+                    if board[row][col] == current_player:
+                        # Check all adjacent squares and jumps
+                        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1), (-2, 0), (2, 0), (0, -2), (0, 2), (-1, -1), (1, 1), (-1, 1), (1, -1), (-2, -2), (2, 2), (-2, 2), (2, -2)]:
+                            new_row, new_col = row + dr, col + dc
+                            if valid_move(row, col, new_row, new_col,board,'T'):
+                                valid_moves.append([row,col,new_row,new_col])
+        return valid_moves
+    
+def is_terminal(state):
+    # Check if 5 or more goats have been captured
+    if state['goats_captured'] >= 5:  # Tigers win
+        return True
+
+    # Check if the tigers can make a move
+    for row in range(5):
+        for col in range(5):
+            if state['board'][row][col] == 'T':
+                # Check all adjacent squares and jumps
+                for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1), (-2, 0), (2, 0), (0, -2), (0, 2), (-1, -1), (1, 1), (-1, 1), (1, -1), (-2, -2), (2, 2), (-2, 2), (2, -2)]:
+                    new_row, new_col = row + dr, col + dc
+                    if valid_move(row, col, new_row, new_col,state['board'],'T'):
+                        return False  # Game continues
+
+    return True
+
+def valid_move(start_row, start_col, end_row, end_col,board,current_player=None):
+    if current_player==None:
+        current_player='G'
+    # Check if the start and end squares are on the board
+    if not (0 <= start_row < 5 and 0 <= start_col < 5 and 0 <= end_row < 5 and 0 <= end_col < 5):
+        return False
+
+    # Check if the start square contains the current player's piece
+    if board[start_row][start_col] != current_player:
+        return False
+
+    # Check if the end square is empty
+    if board[end_row][end_col] !='*':
+        return False
+
+    if current_player == 'G':
+        # Goats can only move to adjacent squares
+        if abs(start_row - end_row) > 1 or abs(start_col - end_col) > 1:
+            return False
+    else:
+        # Tigers can move to adjacent squares or jump over goats
+        if abs(start_row - end_row) > 2 or abs(start_col - end_col) > 2:
+            return False
+        if abs(start_row - end_row) == 2 or abs(start_col - end_col) == 2:
+            # If the tiger is jumping, there must be a goat in between
+            if board[(start_row + end_row) // 2][(start_col + end_col) // 2] != 'G':
+                return False
+
+    return True
+
+def make_move(state,move):
+    board=state['board']
+    if move[2]==None:
+        board[move[0]][move[1]] = 'G'
+        state['goats'] -= 1
+        state['board']=board
+        state['current_player']='T'
+        return state
+    else:
+        temp=board[move[0]][move[1]]
+        board[move[2]][move[3]] = temp
+        board[move[0]][move[1]] = '*'
+        state['board']=board
+        # Check if the tiger captured a goat
+        if abs(move[0] - move[2]) == 2 or abs(move[1] - move[3]) == 2:
+            state['goats_captured'] += 1
+            state['board'][(move[0] + move[2]) // 2][(move[1] + move[3]) // 2] = '*'  # Remove the goat from the board
+        if state['current_player']=='T':
+            state['current_player']='G'
+        else:
+            state['current_player']='T'
+        return state
+
+def perform_mcts(state, root, iterations):
+    for itr in range(iterations):
+        node = root
+        current_state = deepcopy(state)
+
+        # Selection phase
+        while not is_terminal(current_state) and node.is_fully_expanded():
+            node = node.select_child()
+            current_state = node.state
+
+        # Expansion phase
+        if not is_terminal(current_state):
+            untried_moves = [move for move in get_valid_moves(current_state) if move not in [child.state for child in node.children]]
+            selected_move = random.choice(untried_moves)
+            current_state = make_move(current_state, selected_move)
+            node = node.add_child(deepcopy(current_state))
+
+        # Simulation phase (random playout)
+        simulation_state = deepcopy(current_state)
+        while not is_terminal(simulation_state):
+            random_move = random.choice(get_valid_moves(simulation_state))
+            simulation_state = make_move(simulation_state, random_move)
+
+        # Backpropagation phase
+        score = simulate(simulation_state)
+        while node is not None:
+            node.update(score)
+            node = node.parent
+
+    best_child = max(root.children, key=lambda node: node.visits)
+    return best_child.state
+
+def get_score(state):
+    # Return the score of the terminal state
+    if state['goats_captured'] >= 5:  # Tigers win
+        if state['current_player']=='T':
+            return 1
+        else:
+            return -1
+    else:
+        if len(get_valid_moves(state))==0:
+            if state['current_player']=='T':
+                return -1
+            else:
+                return 1
+    
+def simulate(state):
+    # Simulation strategy: randomly simulate until the game ends and return the score
+    while not is_terminal(state):
+        random_move = random.choice(state.get_valid_moves())
+        state=make_move(state,random_move)
+
+    return get_score(state)  # Return the score of the terminal state
+
+class MonteCarloTreeSearchNode():
+    def __init__(self, state,simulation_no=10, parent=None, parent_action=None):
+        self.simulation_no = simulation_no
+        self.state = state
+        self.parent = parent
+        self.parent_action = parent_action
+        self.children = []
+        self._number_of_visits = 0
+        self._results = defaultdict(int)
+        self._results[1] = 0
+        self._results[-1] = 0
+        self._untried_actions = None
+        self._untried_actions = self.untried_actions()
+        return
+
+    def untried_actions(self):
+
+        self._untried_actions = self.get_legal_actions()
+        return self._untried_actions
+
+    def q(self):
+        wins = self._results[1]
+        loses = self._results[-1]
+        return wins - loses
+    
+    def n(self):
+        return self._number_of_visits
+
+    def expand(self):
+	
+        action = self._untried_actions.pop()
+        next_state = self.move(action)
+        child_node = MonteCarloTreeSearchNode(
+            next_state, parent=self, parent_action=action)
+
+        self.children.append(child_node)
+        return child_node 
+    def is_terminal_node(self):
+        return self.is_game_over()
+    
+    def rollout(self):
+        current_rollout_state = self.state
+        
+        while not is_terminal(current_rollout_state):
+            
+            possible_moves = get_valid_moves(current_rollout_state)
+            
+            action = self.rollout_policy(possible_moves)
+            current_rollout_state = make_move(current_rollout_state,action)
+        return get_score(current_rollout_state)
+    
+    def backpropagate(self, result):
+        self._number_of_visits += 1.
+        self._results[result] += 1.
+        if self.parent:
+            self.parent.backpropagate(result)
+            
+    def is_fully_expanded(self):
+        return len(self._untried_actions) == 0
+    def best_child(self, c_param=0.1):
+    
+        choices_weights = [(c.q() / c.n()) + c_param * np.sqrt((2 * np.log(self.n()) / c.n())) for c in self.children]
+        return self.children[np.argmax(choices_weights)]
+    
+    def rollout_policy(self, possible_moves):
+    
+        return possible_moves[np.random.randint(len(possible_moves))]
+    
+    def _tree_policy(self):
+
+        current_node = self
+        while not current_node.is_terminal_node():
+            
+            if not current_node.is_fully_expanded():
+                return current_node.expand()
+            else:
+                current_node = current_node.best_child()
+        return current_node
+    
+    def best_action(self):
+        simulation_no = self.simulation_no
+        
+        
+        for i in range(simulation_no):
+            
+            v = self._tree_policy()
+            reward = v.rollout()
+            v.backpropagate(reward)
+        
+        return self.best_child(c_param=0.)
+    
+    def get_legal_actions(self):
+        
+        current_player=self.state['current_player']
+        valid_moves=[]
+        board=self.state['board']
+        if current_player == 'G':
+            if self.state['goats'] > 0:
+                # If there are still goats to be placed
+                for row in range(5):
+                    for col in range(5):
+                        if board[row][col] == '*':
+                            valid_moves.append((row,col,None,None))
+            else:
+                # If all goats have been placed, they can move
+                for row in range(5):
+                    for col in range(5):
+                        if board[row][col] == current_player:
+                            # Check all adjacent squares
+                            for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                                new_row, new_col = row + dr, col + dc
+                                if valid_move(row, col, new_row, new_col,board,'G'):
+                                    valid_moves.append([row,col,new_row,new_col])
+                                    
+        elif current_player == 'T':
+            for row in range(5):
+                for col in range(5):
+                    if board[row][col] == current_player:
+                        # Check all adjacent squares and jumps
+                        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1), (-2, 0), (2, 0), (0, -2), (0, 2), (-1, -1), (1, 1), (-1, 1), (1, -1), (-2, -2), (2, 2), (-2, 2), (2, -2)]:
+                            new_row, new_col = row + dr, col + dc
+                            if valid_move(row, col, new_row, new_col,board,'T'):
+                                valid_moves.append([row,col,new_row,new_col])
+        return valid_moves
+   
+    def is_game_over(self):
+        if self.state['goats_captured'] >= 5:  # Tigers win
+            return True
+
+        # Check if the tigers can make a move
+        for row in range(5):
+            for col in range(5):
+                if self.state['board'][row][col] == 'T':
+                    # Check all adjacent squares and jumps
+                    for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1), (-2, 0), (2, 0), (0, -2), (0, 2), (-1, -1), (1, 1), (-1, 1), (1, -1), (-2, -2), (2, 2), (-2, 2), (2, -2)]:
+                        new_row, new_col = row + dr, col + dc
+                        if valid_move(row, col, new_row, new_col,self.state['board'],'T'):
+                            return False  # Game continues
+
+        return True     
+
+    def game_result(self):
+        if self.state['goats_captured'] >= 5:  # Tigers win
+            if self.state['current_player']=='T':
+                return 1
+            else:
+                return -1
+        else:
+            if len(self.get_legal_actions())==0:
+                if self.state['current_player']=='T':
+                    return -1
+                else:
+                    return 1
+
+    def move(self,move):
+        board=self.state['board']
+        if move[2]==None:
+            board[move[0]][move[1]] = 'G'
+            self.state['goats'] -= 1
+            self.state['board']=board
+            self.state['current_player']='T'
+            return
+        else:
+            temp=board[move[0]][move[1]]
+            board[move[2]][move[3]] = temp
+            board[move[0]][move[1]] = '*'
+            self.state['board']=board
+            # Check if the tiger captured a goat
+            if abs(move[0] - move[2]) == 2 or abs(move[1] - move[3]) == 2:
+                self.state['goats_captured'] += 1
+                self.state['board'][(move[0] + move[2]) // 2][(move[1] + move[3]) // 2] = '*'  # Remove the goat from the board
+            if self.state['current_player']=='T':
+                self.state['current_player']='G'
+            else:
+                self.state['current_player']='T'
+            return
+        
+class montecarlo(MCTSNode):
+    def __init__(self,player,iterations):
+        self.player=player
+        self.iterations=iterations
+    
+    def next_move(self,state):
+        root=MonteCarloTreeSearchNode(state,self.iterations)
+        best_state = root.best_action()
+        # Find the move that leads to the best state
+        best_move=None
+        valid_moves=get_valid_moves(state)
+        for move in valid_moves:
+            temp=make_move(deepcopy(state),move)
+            # Check if every element in the board is same as temp
+            if all([temp['board'][i][j] == best_state['board'][i][j] for i in range(5) for j in range(5)]):
+                return move
+                break
+        return best_move
